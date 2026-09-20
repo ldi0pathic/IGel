@@ -786,36 +786,61 @@ const mutationObserver = new MutationObserver((mutations) => {
   });
 });
 
-// --- URL-Änderungs-ERKENNUNG ---
+// --- Lightbox-Erkennung ---
 
-let lastUrl = location.href;
-const URL_CHECK_INTERVAL = 100;
-
-function urlChanged() {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    return true;
+function isLightboxOpen() {
+  // Instagram Lightbox: oft ein <div role="dialog"> oder ähnliches
+  const dialog = document.querySelector('div[role="dialog"]');
+  if (dialog) {
+    const rect = dialog.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const style = window.getComputedStyle(dialog);
+      if (style.display !== 'none' && style.visibility !== 'hidden') {
+        console.log('[IGel] Lightbox detected via dialog');
+        return true;
+      }
+    }
   }
+
+  // Alternative: erkennbar an einem sehr großen Bild, das den Viewport überdeckt
+  const fullscreenImages = document.querySelectorAll('img[src*="cdninstagram.com"]');
+  for (const img of fullscreenImages) {
+    const rect = img.getBoundingClientRect();
+    if (rect.width > window.innerWidth * 0.9 && rect.height > window.innerHeight * 0.9) {
+      const style = window.getComputedStyle(img);
+      if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+        console.log('[IGel] Lightbox detected via large image (' + Math.round(rect.width) + 'x' + Math.round(rect.height) + ')');
+        return true;
+      }
+    }
+  }
+
   return false;
 }
 
-function handleUrlChange() {
-  if (urlChanged()) {
-    console.log('[IGel] URL changed, resetting buttons');
+let lightboxWasOpen = false;
+
+function checkLightboxChange() {
+  const nowOpen = isLightboxOpen();
+  console.log('[IGel] Lightbox state: was=' + lightboxWasOpen + ', now=' + nowOpen);
+  if (lightboxWasOpen && !nowOpen) {
+    console.log('[IGel] Lightbox closed — recreating buttons');
     const layer = getOverlayLayer();
     layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
     mediaButtons.clear();
-    // Neue Buttons für sichtbare Medien
     getVisibleImages().forEach(img => addButtonToMedia(img));
     getVisibleVideos().forEach(video => addButtonToMedia(video));
     scheduleReposition();
+  } else if (!lightboxWasOpen && nowOpen) {
+    console.log('[IGel] Lightbox opened — hiding buttons');
+    const layer = getOverlayLayer();
+    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
+    mediaButtons.clear();
   }
+  lightboxWasOpen = nowOpen;
 }
 
-window.addEventListener('popstate', handleUrlChange);
-window.addEventListener('pushstate', handleUrlChange);
-window.addEventListener('replacestate', handleUrlChange);
-setInterval(handleUrlChange, URL_CHECK_INTERVAL);
+// --- URL-Änderungs-ERKENNUNG ---
 
 // History-Patch (fallback falls Events nicht feuern)
 (function patchHistory() {
@@ -834,6 +859,45 @@ setInterval(handleUrlChange, URL_CHECK_INTERVAL);
     return ret;
   };
 })();
+
+// --- URL-Änderungs-ERKENNUNG ---
+
+let lastUrl = location.href;
+
+function urlChanged() {
+  if (location.href !== lastUrl) {
+    lastUrl = location.href;
+    return true;
+  }
+  return false;
+}
+
+function handleUrlChange() {
+  if (urlChanged()) {
+    console.log('[IGel] URL changed, resetting buttons (wasLightbox=' + lightboxWasOpen + ')');
+    const layer = getOverlayLayer();
+    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
+    mediaButtons.clear();
+    // Nur neue Buttons erstellen, wenn keine Lightbox offen ist
+    if (!isLightboxOpen()) {
+      getVisibleImages().forEach(img => addButtonToMedia(img));
+      getVisibleVideos().forEach(video => addButtonToMedia(video));
+      scheduleReposition();
+    }
+    lightboxWasOpen = false; // Reset, da neue Seite
+  }
+}
+
+window.addEventListener('popstate', handleUrlChange);
+window.addEventListener('pushstate', handleUrlChange);
+window.addEventListener('replacestate', handleUrlChange);
+window.addEventListener('hashchange', handleUrlChange);
+
+// Kombiniertes Intervall: URL-Check + Lightbox-Status-Check
+setInterval(() => {
+  handleUrlChange();
+  checkLightboxChange();
+}, 100);
 
 // --- Download-Handler ---
 
