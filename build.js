@@ -1,0 +1,43 @@
+import * as esbuild from 'esbuild';
+import { cpSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'fs';
+import { join } from 'path';
+
+const isZip = process.argv.includes('--zip');
+
+rmSync('dist', { recursive: true, force: true });
+mkdirSync('dist/platforms', { recursive: true });
+
+const entryPoints = [
+  { in: 'src/background.js', out: 'background' },
+  { in: 'src/platforms/instagram.js', out: 'platforms/instagram' },
+];
+
+await esbuild.build({
+  entryPoints: entryPoints.map((e) => ({ in: e.in, out: e.out })),
+  outdir: 'dist',
+  bundle: true,
+  format: 'iife',
+  minify: isZip,
+  target: ['chrome116'],
+});
+
+cpSync('icons', 'dist/icons', { recursive: true });
+
+// Remove desktop.ini files that Windows creates in copied directories
+function removeDesktopIni(dir) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) removeDesktopIni(full);
+    else if (entry.name.toLowerCase() === 'desktop.ini') rmSync(full, { force: true });
+  }
+}
+removeDesktopIni('dist');
+
+const manifest = JSON.parse(readFileSync('manifest.json', 'utf8'));
+writeFileSync('dist/manifest.json', JSON.stringify(manifest, null, 2));
+
+console.log('Build complete: dist/');
+
+if (isZip) {
+  console.log('Zip builds not configured for this version.');
+}
