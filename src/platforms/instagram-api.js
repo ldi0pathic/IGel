@@ -1,4 +1,4 @@
-// SocialSnag — Instagram private web API helpers (pure, testable)
+// IGel — Instagram private web API helpers (pure, testable)
 
 import { classifyFailure, withItemMeta } from './common.js';
 
@@ -22,7 +22,7 @@ export function shortcodeToMediaId(shortcode) {
 
 // Choose one media url from a size-ranked candidate list by a quality preference.
 //
-// The default preference, 'largest', is SocialSnag's historical behavior: take the
+// The default preference, 'largest', is IGel's default behavior: take the
 // biggest candidate. A resolution cap ({ maxWidth: N }) instead asks for the best
 // candidate no wider than N pixels: the plumbing issue #19 needs so a user can pick
 // a download resolution rather than always the largest. If every candidate is wider

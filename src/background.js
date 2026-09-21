@@ -2,7 +2,6 @@
 
 import {
   ALLOWED_DOMAINS,
-  sanitizeFilename,
   renderTemplate,
   withItemMeta,
   classifyFailure,
@@ -20,15 +19,12 @@ import {
   qualityPreferenceFromSetting,
 } from './platforms/instagram-api.js';
 import { getResolved, setResolved, clearResolveCache } from './platforms/resolve-cache.js';
-import { createTracer } from './resolver-debug.js';
 
-const traceResolver = createTracer({ storage: chrome.storage });
 
 // --- Menu constants ---
 const MENU_PARENT = 'igel_parent';
 const MENU_DOWNLOAD_SINGLE = 'igel_download_single';
 const MENU_DOWNLOAD_ALL = 'igel_download_all';
-const MENU_DOWNLOAD_ZIP = 'igel_download_zip';
 
 const MENU_CONTEXTS = ['page', 'image', 'video', 'link'];
 
@@ -39,7 +35,6 @@ async function rebuildContextMenu() {
   chrome.contextMenus.create({ id: MENU_PARENT, title: 'IGel', ...shared });
   chrome.contextMenus.create({ id: MENU_DOWNLOAD_SINGLE, parentId: MENU_PARENT, title: 'Download this (HD)', ...shared });
   chrome.contextMenus.create({ id: MENU_DOWNLOAD_ALL, parentId: MENU_PARENT, title: 'Download all from post', ...shared });
-  chrome.contextMenus.create({ id: MENU_DOWNLOAD_ZIP, parentId: MENU_PARENT, title: 'Download all as .zip', ...shared });
 }
 
 chrome.runtime.onInstalled.addListener(rebuildContextMenu);
@@ -47,12 +42,12 @@ chrome.runtime.onInstalled.addListener(rebuildContextMenu);
 // --- Platform detection ---
 export function detectPlatform(url) {
   if (!url) return null;
-  if (url.includes('instagram.com')) return 'instagram';
-  return null;
-}
-
-export async function isPlatformEnabled(platform) {
-  return true; // Only Instagram — always enabled
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname === 'instagram.com' || hostname.endsWith('.instagram.com') ? 'instagram' : null;
+  } catch {
+    return null;
+  }
 }
 
 // --- URL helpers ---
@@ -112,23 +107,18 @@ export async function resolveInstagramPost(
     );
     if (!resp.ok) {
       console.warn('IGel: Instagram API returned', resp.status);
-      await traceResolver({ platform: 'instagram', path: 'post-api', outcome: 'http-error', status: resp.status });
       return { error: mapIgStatusToMessage(resp.status), code: mapIgStatusToCode(resp.status) };
     }
 
     const data = await resp.json();
     const items = parsePostMedia(data, shortcode, preference);
     if (items.length === 0) {
-      await traceResolver({ platform: 'instagram', path: 'post-api', outcome: 'empty', status: resp.status, itemCount: 0 });
       return { error: mapIgStatusToMessage(0), code: mapIgStatusToCode(0) };
     }
-
-    await traceResolver({ platform: 'instagram', path: 'post-api', outcome: 'ok', status: resp.status, itemCount: items.length });
     setResolved('instagram_post', cacheId, items);
     return { items };
   } catch (e) {
     console.error('IGel: Instagram post API failed:', e);
-    await traceResolver({ platform: 'instagram', path: 'post-api', outcome: 'threw' });
     return { error: null };
   }
 }
@@ -150,27 +140,23 @@ async function fetchInstagramUserId(username, { fetchImpl = globalThis.fetch, si
   }
 }
 
-async function resolveReelsMedia(reelId, { storyId, username = null, detail, fetchImpl = globalThis.fetch, signal, preference = 'largest' } = {}) {
+async function resolveReelsMedia(reelId, { storyId, username = null, fetchImpl = globalThis.fetch, signal, preference = 'largest' } = {}) {
   try {
     const resp = await fetchImpl(
       `https://i.instagram.com/api/v1/feed/reels_media/?reel_ids=${reelId}`,
       { headers: { 'x-ig-app-id': IG_APP_ID }, credentials: 'include', signal },
     );
     if (!resp.ok) {
-      await traceResolver({ platform: 'instagram', path: 'story-api', outcome: 'http-error', status: resp.status });
       return { error: mapIgStatusToMessage(resp.status), code: mapIgStatusToCode(resp.status) };
     }
     const data = await resp.json();
     const items = parseStoryTray(data, { storyId, username, preference });
     if (items.length === 0) {
-      await traceResolver({ platform: 'instagram', path: 'story-api', outcome: 'empty', status: resp.status, itemCount: 0, detail: detail ?? (storyId ? 'single story' : 'full tray') });
       return { error: mapIgStatusToMessage(0), code: mapIgStatusToCode(0) };
     }
-    await traceResolver({ platform: 'instagram', path: 'story-api', outcome: 'ok', status: resp.status, itemCount: items.length });
     return { items };
   } catch (e) {
     console.error('IGel: IG reels_media API failed:', e);
-    await traceResolver({ platform: 'instagram', path: 'story-api', outcome: 'threw' });
     return { error: null };
   }
 }
@@ -190,7 +176,7 @@ export async function resolveInstagramHighlights({ highlightId, itemId = null },
   const highlightKey = qualityCacheId(`highlight_${highlightId}_${itemId ?? 'all'}`, preference);
   const cached = getResolved('instagram_highlight', highlightKey);
   if (cached) return { items: cached };
-  const result = await resolveReelsMedia(`highlight:${highlightId}`, { storyId: itemId, detail: itemId ? 'single highlight item' : 'full highlight', fetchImpl, signal, preference });
+  const result = await resolveReelsMedia(`highlight:${highlightId}`, { storyId: itemId, fetchImpl, signal, preference });
   if (result.items) setResolved('instagram_highlight', highlightKey, result.items);
   return result;
 }
@@ -203,7 +189,6 @@ export async function resolveViaApi(platform, pageUrl, options = {}) {
       const shortcode = match[2];
       const video = await resolveInstagramVideo(shortcode, options);
       if (video.url) {
-        await traceResolver({ platform, path: 'api-dispatch', outcome: 'ok', itemCount: 1 });
         return {
           item: withItemMeta(
             { url: video.url, type: 'video', filename: `reel_${shortcode}`, needsVideoLookup: false },
@@ -219,7 +204,6 @@ export async function resolveViaApi(platform, pageUrl, options = {}) {
     if (storyRef) {
       const stories = await resolveInstagramStories(storyRef, options);
       if (stories.items?.length) {
-        await traceResolver({ platform, path: 'api-dispatch', outcome: 'ok', itemCount: stories.items.length });
         return { item: stories.items[0] };
       }
       return { item: null, error: stories.error };
@@ -228,7 +212,6 @@ export async function resolveViaApi(platform, pageUrl, options = {}) {
     if (highlightRef) {
       const highlights = await resolveInstagramHighlights(highlightRef, options);
       if (highlights.items?.length) {
-        await traceResolver({ platform, path: 'api-dispatch', outcome: 'ok', itemCount: highlights.items.length });
         return { item: highlights.items[0] };
       }
       return { item: null, error: highlights.error };
@@ -646,8 +629,8 @@ async function recordDownload(item, platform, downloadId) {
 
 // --- Context menu handler ---
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  const isZipMenu = info.menuItemId === MENU_DOWNLOAD_ZIP;
-  const type = (info.menuItemId === MENU_DOWNLOAD_ALL || isZipMenu) ? 'all' : 'single';
+  if (!tab?.id || ![MENU_DOWNLOAD_SINGLE, MENU_DOWNLOAD_ALL].includes(info.menuItemId)) return;
+  const type = info.menuItemId === MENU_DOWNLOAD_ALL ? 'all' : 'single';
 
   const platform = detectPlatform(tab.url);
   if (!platform) {
@@ -657,7 +640,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
   const platformSettings = await chrome.storage.sync.get({
     showNotifications: true,
-    zipMultiPosts: false,
     downloadQuality: 'largest',
   });
   const resolveOptions = { preference: qualityPreferenceFromSetting(platformSettings.downloadQuality) };
@@ -715,14 +697,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
             pageUrl,
             preference: resolveOptions.preference,
           });
-          await traceResolver({
-            platform, path: 'dom',
-            outcome: response?.urls?.length ? 'ok' : 'empty',
-            itemCount: response?.urls?.length || 0,
-          });
         } catch (sendErr) {
           console.warn('IGel: content script unavailable:', sendErr.message);
-          await traceResolver({ platform, path: 'dom', outcome: 'unavailable', detail: 'content script not loaded' });
           try {
             await chrome.scripting.executeScript({
               target: { tabId: tab.id },
@@ -736,13 +712,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
               pageUrl,
               preference: resolveOptions.preference,
             });
-            await traceResolver({
-              platform, path: 'dom-injected',
-              outcome: response?.urls?.length ? 'ok' : 'empty',
-              itemCount: response?.urls?.length || 0,
-            });
           } catch (injectErr) {
-            await traceResolver({ platform, path: 'dom-injected', outcome: 'threw' });
             chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title: 'IGel', message: 'IGel: could not connect to page. Try refreshing.' });
             return;
           }
@@ -870,7 +840,7 @@ async function handleDownloadBatch(items, platform) {
  * Lädt alle Medien eines Instagram-Posts über die API (wie Context Menu "Download all").
  * Wird vom Content Script Button-Klick auf Carousel-Posts aufgerufen.
  */
-async function handleDownloadFromShortcode(shortcode, preference, tabId) {
+async function handleDownloadFromShortcode(shortcode, preference) {
   const resolveOptions = { preference };
 
   // API-Resolve wie beim Context Menu
@@ -944,6 +914,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Download-Batch vom Content Script (Button-Klick)
   if (message.action === 'downloadBatch' && message.items && sender.tab) {
+    if (message.platform && message.platform !== 'instagram') return;
     handleDownloadBatch(message.items, message.platform || 'instagram').then(
       () => sendResponse({ ok: true }),
       (err) => {
@@ -956,7 +927,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Download über Shortcode (Button-Klick auf Carousel-Post)
   if (message.action === 'downloadFromShortcode' && message.shortcode && sender.tab) {
-    handleDownloadFromShortcode(message.shortcode, message.preference || 'largest', sender.tab.id).then(
+    handleDownloadFromShortcode(message.shortcode, message.preference || 'largest').then(
       () => sendResponse({ ok: true }),
       (err) => {
         console.error('IGel: downloadFromShortcode error:', err);

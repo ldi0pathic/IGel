@@ -19,7 +19,7 @@
 // throughout a burst by definition. A worker restart between bursts just means the
 // next resolve is a miss, which is the behavior before this cache existed.
 
-// Instagram and Twitter CDN URLs are time-signed. An entry that outlives its
+// Instagram CDN URLs are time-signed. An entry that outlives its
 // signature hands back a URL that 403s on download, which is a worse outcome than
 // the one extra API call this cache exists to avoid, so the TTL is deliberately
 // far below any observed signature lifetime rather than as long as it could be.

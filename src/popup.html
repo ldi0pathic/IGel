@@ -14,10 +14,27 @@
   </header>
 
   <main>
-    <div class="hint" id="hint"></div>
-  </main>
+    <p class="hint" id="hint"></p>
 
-  <footer></footer>
+    <section class="settings" aria-labelledby="download-path-heading">
+      <h2 id="download-path-heading">Download-Ordner</h2>
+      <label for="download-path">Pfad innerhalb von „Downloads“</label>
+      <input id="download-path" type="text" spellcheck="false" autocomplete="off" placeholder="IGel/{platform}">
+      <p class="field-error" id="download-path-error" role="alert" hidden></p>
+      <p class="save-status" id="save-status" aria-live="polite"></p>
+
+      <p class="settings-help">Du kannst Unterordner mit <code>/</code> anlegen. Verfügbare Platzhalter:</p>
+      <ul class="token-list" aria-label="Verfügbare Platzhalter">
+        <li><code>{platform}</code> Plattform</li>
+        <li><code>{username}</code> Benutzername</li>
+        <li><code>{postId}</code> Beitrags-ID</li>
+        <li><code>{type}</code> Medientyp</li>
+        <li><code>{index}</code> Nummer</li>
+        <li><code>{date}</code> Datum</li>
+      </ul>
+      <p class="example">Beispiel: <code>IGel/{username}/{date}</code></p>
+    </section>
+  </main>
 
   <script src="popup.js"></script>
 </body>
