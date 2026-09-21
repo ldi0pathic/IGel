@@ -5,7 +5,7 @@ import {
   sanitizeDownloadPath,
   validateDownloadUrl,
 } from '../src/background.js';
-import { downloadPathError } from '../src/popup.js';
+import { downloadPathError, saveDownloadPath } from '../src/popup.js';
 
 describe('Instagram security boundaries', () => {
   it('accepts only Instagram hosts', () => {
@@ -35,6 +35,16 @@ describe('download path configuration', () => {
   it('rejects traversal and unknown placeholders before saving', () => {
     expect(downloadPathError('IGel/../private')).toContain('nicht erlaubt');
     expect(downloadPathError('IGel/{account}')).toContain('{account}');
+  });
+
+  it('persists the selected path and verifies the stored value', async () => {
+    let stored = 'IGel/{platform}';
+    const storage = {
+      set: async ({ downloadPath }) => { stored = downloadPath; },
+      get: async () => ({ downloadPath: stored }),
+    };
+    await expect(saveDownloadPath('IGel/{username}', storage)).resolves.toBe('IGel/{username}');
+    expect(stored).toBe('IGel/{username}');
   });
 });
 

@@ -386,6 +386,14 @@ export function usernameForTarget(target) {
   return null;
 }
 
+function withUsername(items, username, shortcode = null) {
+  if (!username) return items;
+  return items.map((item) => withItemMeta(item, {
+    postId: item.meta?.postId || shortcode,
+    username: item.meta?.username || username,
+  }));
+}
+
 function shortcodeForTarget(target, pathname) {
   const ownerHrefs = ancestorHrefs(target);
   if (ownerHrefs.length > 0) return shortcodeFromContainer(ownerHrefs);
@@ -410,9 +418,12 @@ function shortcodeForTarget(target, pathname) {
 
 async function resolveAll(target, pathname, preference = 'largest') {
   const urlShortcode = extractShortcode(pathname);
+  const username = usernameForTarget(target);
 
   const jsonItems = extractFromPageJson(pathname, preference);
-  if (jsonItems.length > 0) return { items: jsonItems, shortcode: urlShortcode };
+  if (jsonItems.length > 0) {
+    return { items: withUsername(jsonItems, username, urlShortcode), shortcode: urlShortcode };
+  }
 
   let post = findPostContainer(target, [
     'article',
@@ -441,12 +452,8 @@ async function resolveAll(target, pathname, preference = 'largest') {
     shortcode,
     preference,
   );
-  const username = usernameForTarget(target);
   return {
-    items: username ? items.map((item) => withItemMeta(item, {
-      postId: item.meta?.postId || shortcode,
-      username: item.meta?.username || username,
-    })) : items,
+    items: withUsername(items, username, shortcode),
     shortcode,
   };
 }

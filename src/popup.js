@@ -13,6 +13,16 @@ export function downloadPathError(value) {
   return unknown ? `Unbekannter Platzhalter: {${unknown}}.` : null;
 }
 
+export async function saveDownloadPath(value, storage = chrome.storage.sync) {
+  const downloadPath = value.trim() || DEFAULT_DOWNLOAD_PATH;
+  await storage.set({ downloadPath });
+  const saved = await storage.get({ downloadPath: DEFAULT_DOWNLOAD_PATH });
+  if (saved.downloadPath !== downloadPath) {
+    throw new Error('Der Download-Pfad konnte nicht gespeichert werden.');
+  }
+  return downloadPath;
+}
+
 async function initPopup() {
   document.querySelector('.version').textContent = `v${chrome.runtime.getManifest().version}`;
   const hint = document.getElementById('hint');
@@ -46,8 +56,14 @@ async function initPopup() {
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (validate()) return;
-    await chrome.storage.sync.set({ downloadPath: input.value.trim() || DEFAULT_DOWNLOAD_PATH });
-    status.textContent = 'Gespeichert';
+    try {
+      await saveDownloadPath(input.value);
+      status.textContent = 'Gespeichert';
+    } catch (saveError) {
+      console.error('IGel: could not save download path:', saveError);
+      error.textContent = 'Der Download-Pfad konnte nicht gespeichert werden.';
+      error.hidden = false;
+    }
   });
 }
 
