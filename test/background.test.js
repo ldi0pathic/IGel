@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { detectPlatform, sanitizeDownloadPath, validateDownloadUrl } from '../src/background.js';
+import {
+  applyFallbackUsername,
+  detectPlatform,
+  sanitizeDownloadPath,
+  validateDownloadUrl,
+} from '../src/background.js';
 import { downloadPathError } from '../src/popup.js';
 
 describe('Instagram security boundaries', () => {
@@ -30,5 +35,22 @@ describe('download path configuration', () => {
   it('rejects traversal and unknown placeholders before saving', () => {
     expect(downloadPathError('IGel/../private')).toContain('nicht erlaubt');
     expect(downloadPathError('IGel/{account}')).toContain('{account}');
+  });
+});
+
+describe('feed download metadata', () => {
+  it('uses the article username only when the API did not provide one', () => {
+    expect(applyFallbackUsername([
+      { meta: { postId: 'post-id' } },
+      { meta: { postId: 'post-id', username: 'api_owner' } },
+    ], 'feed_owner')).toEqual([
+      { meta: { postId: 'post-id', username: 'feed_owner' } },
+      { meta: { postId: 'post-id', username: 'api_owner' } },
+    ]);
+  });
+
+  it('ignores an invalid username sent by a page', () => {
+    const items = [{ meta: { postId: 'post-id' } }];
+    expect(applyFallbackUsername(items, '../unsafe')).toBe(items);
   });
 });

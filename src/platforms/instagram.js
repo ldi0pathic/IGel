@@ -201,11 +201,12 @@ export function extractFromPageJson(pathname, preference = 'largest') {
 export function resolveSingle(srcUrl, target, pathname, preference = 'largest') {
   const shortcode = shortcodeForTarget(target, pathname);
   const filenameShortcode = extractShortcode(pathname);
+  const username = usernameForTarget(target);
   const url = upgradeImageUrl(srcUrl, target, preference);
   if (url) {
     return [withItemMeta(
       { url, type: 'image', filename: filenameShortcode ? `post_${filenameShortcode}` : null },
-      { postId: shortcode },
+      { postId: shortcode, username },
     )];
   }
 
@@ -215,7 +216,7 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
     if (upgraded) {
       return [withItemMeta(
         { url: upgraded, type: 'image', filename: filenameShortcode ? `post_${filenameShortcode}` : null },
-        { postId: shortcode },
+        { postId: shortcode, username },
       )];
     }
   }
@@ -227,7 +228,7 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
     if (src && !src.startsWith('blob:')) {
       return [withItemMeta(
         { url: src, type: 'video', filename: filenameShortcode ? `reel_${filenameShortcode}` : null },
-        { postId: shortcode },
+        { postId: shortcode, username },
       )];
     }
 
@@ -235,11 +236,11 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
     const scriptTexts = Array.from(scripts).map((s) => s.textContent);
     const cdnUrl = extractVideoUrlFromScripts(scriptTexts, preference);
     if (cdnUrl) {
-      return [{
+      return [withItemMeta({
         url: cdnUrl,
         type: 'video',
         filename: filenameShortcode ? `reel_${filenameShortcode}` : null,
-      }];
+      }, { postId: shortcode, username })];
     }
 
     if (shortcode) {
@@ -248,7 +249,7 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
         filename: filenameShortcode ? `reel_${filenameShortcode}` : null,
         shortcode,
         needsVideoLookup: true,
-      }, { postId: shortcode })];
+      }, { postId: shortcode, username })];
     }
   }
 
@@ -370,6 +371,21 @@ function descendantHrefs(container) {
   return Array.from(container.querySelectorAll('a[href]')).map((a) => a.getAttribute('href'));
 }
 
+const PROFILE_PATH = /^\/([A-Za-z0-9._]+)\/?$/;
+
+/** Find the post owner's profile link in the feed article containing this media. */
+export function usernameForTarget(target) {
+  const article = target?.closest?.('article');
+  const container = article || target?.closest?.('[role="dialog"]');
+  if (!container) return null;
+
+  for (const href of descendantHrefs(container)) {
+    const match = href?.match(PROFILE_PATH);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function shortcodeForTarget(target, pathname) {
   const ownerHrefs = ancestorHrefs(target);
   if (ownerHrefs.length > 0) return shortcodeFromContainer(ownerHrefs);
@@ -425,8 +441,12 @@ async function resolveAll(target, pathname, preference = 'largest') {
     shortcode,
     preference,
   );
+  const username = usernameForTarget(target);
   return {
-    items,
+    items: username ? items.map((item) => withItemMeta(item, {
+      postId: item.meta?.postId || shortcode,
+      username: item.meta?.username || username,
+    })) : items,
     shortcode,
   };
 }
@@ -545,12 +565,23 @@ function removeButtonForMedia(mediaEl) {
     btn.remove();
     mediaButtons.delete(mediaEl);
   }
+  delete mediaEl.dataset.igelHasButton;
+}
+
+function clearMediaButtons() {
+  for (const [mediaEl, btn] of mediaButtons) {
+    btn.remove();
+    delete mediaEl.dataset.igelHasButton;
+  }
+  mediaButtons.clear();
 }
 
 // --- Media hinzufügen (wenn sichtbar) ---
 
 function addButtonToMedia(mediaEl) {
-  if (mediaEl.dataset.igelHasButton) return;
+  if (mediaButtons.has(mediaEl)) return;
+  // A stale marker can remain after the overlay layer was cleared.
+  delete mediaEl.dataset.igelHasButton;
 
   const url = mediaEl.src ||
     mediaEl.getAttribute('data-src') ||
@@ -651,10 +682,10 @@ function repositionAllButtons() {
 
   // Neue sichtbare Medien erkennen
   getVisibleImages().forEach(img => {
-    if (!img.dataset.igelHasButton) addButtonToMedia(img);
+    addButtonToMedia(img);
   });
   getVisibleVideos().forEach(video => {
-    if (!video.dataset.igelHasButton) addButtonToMedia(video);
+    addButtonToMedia(video);
   });
 }
 
@@ -680,12 +711,8 @@ const mutationObserver = new MutationObserver((mutations) => {
       }
 
       // Kinder nach Medien durchsuchen
-      Array.from(node.querySelectorAll('img')).forEach(img => {
-        if (img.dataset.igelHasButton) removeButtonForMedia(img);
-      });
-      Array.from(node.querySelectorAll('video')).forEach(video => {
-        if (video.dataset.igelHasButton) removeButtonForMedia(video);
-      });
+      Array.from(node.querySelectorAll('img')).forEach(removeButtonForMedia);
+      Array.from(node.querySelectorAll('video')).forEach(removeButtonForMedia);
     });
 
     // Hinzugefügte Nodes: Buttons erstellen
@@ -760,17 +787,13 @@ function checkLightboxChange() {
   console.log('[IGel] Lightbox state: was=' + lightboxWasOpen + ', now=' + nowOpen);
   if (lightboxWasOpen && !nowOpen) {
     console.log('[IGel] Lightbox closed — recreating buttons');
-    const layer = getOverlayLayer();
-    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
-    mediaButtons.clear();
+    clearMediaButtons();
     getVisibleImages().forEach(img => addButtonToMedia(img));
     getVisibleVideos().forEach(video => addButtonToMedia(video));
     scheduleReposition();
   } else if (!lightboxWasOpen && nowOpen) {
     console.log('[IGel] Lightbox opened — hiding buttons');
-    const layer = getOverlayLayer();
-    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
-    mediaButtons.clear();
+    clearMediaButtons();
   }
   lightboxWasOpen = nowOpen;
 }
@@ -810,9 +833,7 @@ function urlChanged() {
 function handleUrlChange() {
   if (urlChanged()) {
     console.log('[IGel] URL changed, resetting buttons (wasLightbox=' + lightboxWasOpen + ')');
-    const layer = getOverlayLayer();
-    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
-    mediaButtons.clear();
+    clearMediaButtons();
     // Nur neue Buttons erstellen, wenn keine Lightbox offen ist
     if (!isLightboxOpen()) {
       getVisibleImages().forEach(img => addButtonToMedia(img));
@@ -851,12 +872,14 @@ async function handleDownload(url, btnElement) {
     const mediaEl = btnElement?._igelMediaEl || null;
     const domShortcode = urlShortcode || (mediaEl ? shortcodeForTarget(mediaEl, pathname) : null);
     const shortcode = domShortcode;
+    const username = mediaEl ? usernameForTarget(mediaEl) : null;
 
     if (shortcode) {
       console.log('[IGel] Shortcode found:', shortcode, '— requesting API download from background');
       chrome.runtime.sendMessage({
         action: 'downloadFromShortcode',
         shortcode: shortcode,
+        username,
         preference: 'largest',
       }, (response) => {
         if (chrome.runtime.lastError) {
