@@ -1,4 +1,4 @@
-// SocialSnag common utilities (Instagram-only)
+// IGel shared utilities.
 
 // Allowlist of CDN domains we trust for downloads
 export const ALLOWED_DOMAINS = [
@@ -96,7 +96,7 @@ export function renderTemplate(template, fields) {
     .join('')
     .split('/')
     .map((segment) => segment.replace(/^[_\-[\s]+|[_\-[\s]+$/g, ''))
-    .join('');
+    .join('/');
 }
 
 /**

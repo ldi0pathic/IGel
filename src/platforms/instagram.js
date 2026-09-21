@@ -30,47 +30,7 @@ function isValidMediaUrl(url) {
   }
 }
 
-function isMediaTarget(target) {
-  if (!target) return false;
-  if (target.tagName === 'VIDEO' && target.src) return true;
-  if (target.tagName === 'IMG' && target.src) {
-    if (isValidMediaUrl(target.src)) return true;
-  }
-  if (target.closest && (target.closest('video') || target.closest('img'))) {
-    return true;
-  }
-  return false;
-}
 
-function findMediaUrl(target) {
-  const videoEl = target.closest('video');
-  if (videoEl) {
-    const candidates = [
-      videoEl.currentSrc,
-      videoEl.src,
-      ...Array.from(videoEl.querySelectorAll('source')).map(s => s.src),
-    ].filter(Boolean);
-    for (const url of candidates) {
-      if (isValidMediaUrl(url)) return url;
-    }
-  }
-
-  const imgEl = target.closest('img');
-  if (imgEl) {
-    const candidates = [
-      imgEl.currentSrc,
-      imgEl.src,
-      imgEl.dataset.src,
-      imgEl.dataset.lazySrc,
-      imgEl.dataset.original,
-    ].filter(Boolean);
-    for (const url of candidates) {
-      if (isValidMediaUrl(url)) return url;
-    }
-  }
-
-  return null;
-}
 
 // ============================================================================
 //  PURE FUNCTIONS (resolver-logik, unverändert)
@@ -107,33 +67,8 @@ function capturedImageWidth(url) {
   return Number(pathWidth || queryWidth) || Infinity;
 }
 
-function instagramExpiryMs(url) {
-  try {
-    const oe = new URL(url).searchParams.get('oe');
-    if (!oe) return null;
-    const unix = parseInt(oe, 16);
-    if (!Number.isFinite(unix) || unix < 1_000_000_000) return null;
-    return unix * 1000;
-  } catch {
-    return null;
-  }
-}
 
-function usableVariants(variants, now = Date.now()) {
-  const live = variants.filter((variant) => {
-    const expiry = instagramExpiryMs(variant.url);
-    return expiry == null || expiry > now;
-  });
-  return live.length ? live : variants.slice(-1);
-}
 
-function selectCapturedUrl(variants, preference) {
-  return selectByQuality(
-    usableVariants(variants),
-    (variant) => variant.width,
-    preference,
-  );
-}
 
 export function buildImageItems(images, shortcode, startIndex = 1, preference = 'largest') {
   const items = [];
@@ -485,13 +420,11 @@ async function resolveAll(target, pathname, preference = 'largest') {
 
   const shortcode = shortcodeForTarget(target, pathname)
     || shortcodeFromContainer(descendantHrefs(post));
-  const { items, index: nextIndex, domCount } = collectMediaFromContainer(
+  const { items } = collectMediaFromContainer(
     post,
     shortcode,
     preference,
   );
-  let index = nextIndex;
-
   return {
     items,
     shortcode,
@@ -641,12 +574,6 @@ function addButtonToMedia(mediaEl) {
   mediaEl.dataset.igelHasButton = 'true';
 }
 
-function removeButtonForVisibleMedia(mediaEl) {
-  if (mediaEl.dataset.igelHasButton) {
-    removeButtonForMedia(mediaEl);
-    delete mediaEl.dataset.igelHasButton;
-  }
-}
 
 // --- Sichtbare Medien finden ---
 
