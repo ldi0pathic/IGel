@@ -377,12 +377,22 @@ const PROFILE_PATH = /^\/([A-Za-z0-9._]+)\/?$/;
 export function usernameForTarget(target) {
   const article = target?.closest?.('article');
   const container = article || target?.closest?.('[role="dialog"]');
-  if (!container) return null;
-
-  for (const href of descendantHrefs(container)) {
-    const match = href?.match(PROFILE_PATH);
-    if (match) return match[1];
+  console.log('[IGel] usernameForTarget: container=', container ? container.tagName + (container.id ? '#' + container.id : '') : 'none');
+  if (!container) {
+    console.log('[IGel] usernameForTarget: no container found — returning null');
+    return null;
   }
+
+  const hrefs = descendantHrefs(container);
+  console.log('[IGel] usernameForTarget: found', hrefs.length, 'hrefs in container');
+  for (const href of hrefs) {
+    const match = href?.match(PROFILE_PATH);
+    if (match) {
+      console.log('[IGel] usernameForTarget: MATCH — username=', match[1], 'href=', href);
+      return match[1];
+    }
+  }
+  console.log('[IGel] usernameForTarget: no profile href match in container');
   return null;
 }
 
@@ -419,6 +429,7 @@ function shortcodeForTarget(target, pathname) {
 async function resolveAll(target, pathname, preference = 'largest') {
   const urlShortcode = extractShortcode(pathname);
   const username = usernameForTarget(target);
+  console.log('[IGel] resolveAll: shortcode=', urlShortcode, 'usernameFromTarget=', username);
 
   const jsonItems = extractFromPageJson(pathname, preference);
   if (jsonItems.length > 0) {
@@ -881,6 +892,8 @@ async function handleDownload(url, btnElement) {
     const shortcode = domShortcode;
     const username = mediaEl ? usernameForTarget(mediaEl) : null;
 
+    console.log('[IGel] Download click context: pathname=', pathname, 'shortcode=', shortcode, 'username=', username, 'hasMediaEl=', !!mediaEl);
+
     if (shortcode) {
       console.log('[IGel] Shortcode found:', shortcode, '— requesting API download from background');
       chrome.runtime.sendMessage({
@@ -897,6 +910,7 @@ async function handleDownload(url, btnElement) {
       });
     } else {
       console.warn('[IGel] No shortcode found — falling back to DOM resolve');
+      console.log('[IGel] DOM resolve context: pathname=', pathname, 'usernameForTarget result=', username);
       try {
         const result = await resolveAll(mediaEl, pathname, 'largest');
         const items = result.items || [];
