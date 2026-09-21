@@ -22,6 +22,10 @@ await esbuild.build({
 });
 
 cpSync('icons', 'dist/icons', { recursive: true });
+cpSync('src/popup.html', 'dist/popup.html');
+cpSync('src/popup.js', 'dist/popup.js');
+cpSync('src/popup.css', 'dist/popup.css');
+cpSync('src/fonts', 'dist/fonts', { recursive: true });
 
 // Remove desktop.ini files that Windows creates in copied directories
 function removeDesktopIni(dir) {

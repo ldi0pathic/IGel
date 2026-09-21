@@ -789,24 +789,32 @@ const mutationObserver = new MutationObserver((mutations) => {
 // --- Lightbox-Erkennung ---
 
 function isLightboxOpen() {
-  // Instagram Lightbox: oft ein <div role="dialog"> oder ähnliches
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  // Nur echte Lightbox-Dialoge: müssen dominant sein (> 80% des Viewports)
+  // und Medien als Child haben. Instagram nutzt div[role="dialog"] auch für
+  // Loading-Overlays, Story-UI etc. — die haben nicht die Größe einer Lightbox.
   const dialog = document.querySelector('div[role="dialog"]');
   if (dialog) {
     const rect = dialog.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      const style = window.getComputedStyle(dialog);
-      if (style.display !== 'none' && style.visibility !== 'hidden') {
-        console.log('[IGel] Lightbox detected via dialog');
-        return true;
+    if (rect.width > vw * 0.8 && rect.height > vh * 0.8) {
+      const hasMedia = dialog.querySelector('img, video');
+      if (hasMedia) {
+        const style = window.getComputedStyle(dialog);
+        if (style.display !== 'none' && style.visibility !== 'hidden') {
+          console.log('[IGel] Lightbox detected via dominant dialog');
+          return true;
+        }
       }
     }
   }
 
-  // Alternative: erkennbar an einem sehr großen Bild, das den Viewport überdeckt
+  // Alternative: ein einziges riesiges Bild, das den kompletten Viewport überdeckt
   const fullscreenImages = document.querySelectorAll('img[src*="cdninstagram.com"]');
   for (const img of fullscreenImages) {
     const rect = img.getBoundingClientRect();
-    if (rect.width > window.innerWidth * 0.9 && rect.height > window.innerHeight * 0.9) {
+    if (rect.width > vw * 0.9 && rect.height > vh * 0.9) {
       const style = window.getComputedStyle(img);
       if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
         console.log('[IGel] Lightbox detected via large image (' + Math.round(rect.width) + 'x' + Math.round(rect.height) + ')');
@@ -884,7 +892,7 @@ function handleUrlChange() {
       getVisibleVideos().forEach(video => addButtonToMedia(video));
       scheduleReposition();
     }
-    lightboxWasOpen = false; // Reset, da neue Seite
+    // lightboxWasOpen NICHT zurücksetzen — checkLightboxChange() kümmert sich darum
   }
 }
 
@@ -1079,15 +1087,25 @@ function runExtensionInit() {
     console.error('[IGel] Content script init failed:', err);
   }
 
-  // MutationObserver (nur nach document.body verfügbar)
+  // MutationObserver eerst instellen — BEFORE initExistingMedia()
+  // Sonst werden Bilder, die während des initalen Scans landen, übersehen.
   mutationObserver.observe(document.body, { childList: true, subtree: true });
 
   // Overlay-Layer und Buttons nach DOM-Ready
   try {
     getOverlayLayer();
-    initExistingMedia();
-    scheduleReposition();
-    console.log('[IGel] Overlay-layer UI ready.');
+    // Ein Frame warten, damit das Layout berechnet ist und die
+    // sichtbaren Bilder korrekte getBoundingClientRect()-Werte haben.
+    requestAnimationFrame(() => {
+      // Nochmal 1s warten — Instagram lazy-loadet oft, bis die Bilder
+      // mit src/data-src geladen sind. Ohne Wartezeit erhalten wir
+      // leere oder ungültige URLs und damit keine Buttons.
+      setTimeout(() => {
+        initExistingMedia();
+        scheduleReposition();
+        console.log('[IGel] Overlay-layer UI ready.');
+      }, 1000);
+    });
   } catch (err) {
     console.error('[IGel] Overlay-layer init failed:', err);
   }

@@ -774,7 +774,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       successLabel,
     });
     let count = 0;
-    let notifiedStarted = false;
 
     for (const [position, item] of response.urls.entries()) {
       let saved = null;
@@ -785,10 +784,6 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
       }
       if (saved) {
         try {
-          if (!notifiedStarted && platformSettings.showNotifications) {
-            chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title: 'IGel', message: `Download started from ${response.platform}.` });
-            notifiedStarted = true;
-          }
           await trackTerminalDownload({ batchId, downloadId: saved.downloadId, item: { ...item, filename: saved.filename }, platform: response.platform });
           count++;
         } catch {
@@ -839,7 +834,6 @@ async function handleDownloadBatch(items, platform) {
   });
 
   let count = 0;
-  let notifiedStarted = false;
 
   for (const [position, item] of items.entries()) {
     let saved = null;
@@ -851,10 +845,6 @@ async function handleDownloadBatch(items, platform) {
 
     if (saved) {
       try {
-        if (!notifiedStarted && platformSettings.showNotifications) {
-          chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title: 'IGel', message: `Download started from ${platform}.` });
-          notifiedStarted = true;
-        }
         await trackTerminalDownload({ batchId, downloadId: saved.downloadId, item: { ...item, filename: saved.filename }, platform });
         count++;
       } catch {
@@ -904,7 +894,6 @@ async function handleDownloadFromShortcode(shortcode, preference, tabId) {
   });
 
   let count = 0;
-  let notifiedStarted = false;
 
   for (const [position, item] of post.items.entries()) {
     let saved = null;
@@ -916,10 +905,6 @@ async function handleDownloadFromShortcode(shortcode, preference, tabId) {
 
     if (saved) {
       try {
-        if (!notifiedStarted && platformSettings.showNotifications) {
-          chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title: 'IGel', message: `Download started from Instagram.` });
-          notifiedStarted = true;
-        }
         await trackTerminalDownload({ batchId, downloadId: saved.downloadId, item: { ...item, filename: saved.filename }, platform: 'instagram' });
         count++;
       } catch {
