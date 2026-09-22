@@ -123,6 +123,14 @@ export async function resolveInstagramPost(
   }
 }
 
+/** Preserve the API owner when available, otherwise use the feed article owner. */
+export function applyFallbackUsername(items, username) {
+  if (typeof username !== 'string' || !/^[A-Za-z0-9._]+$/.test(username)) return items;
+  return items.map((item) => item.meta?.username
+    ? item
+    : withItemMeta(item, { postId: item.meta?.postId, username }));
+}
+
 // --- Instagram story/highlight resolvers ---
 async function fetchInstagramUserId(username, { fetchImpl = globalThis.fetch, signal } = {}) {
   try {
@@ -840,7 +848,7 @@ async function handleDownloadBatch(items, platform) {
  * Lädt alle Medien eines Instagram-Posts über die API (wie Context Menu "Download all").
  * Wird vom Content Script Button-Klick auf Carousel-Posts aufgerufen.
  */
-async function handleDownloadFromShortcode(shortcode, preference) {
+async function handleDownloadFromShortcode(shortcode, preference, username = null) {
   const resolveOptions = { preference };
 
   // API-Resolve wie beim Context Menu
@@ -850,22 +858,23 @@ async function handleDownloadFromShortcode(shortcode, preference) {
     return;
   }
 
+  const items = applyFallbackUsername(post.items, username);
   const platformSettings = await chrome.storage.sync.get({
     showNotifications: true,
     downloadQuality: 'largest',
   });
 
-  const successLabel = post.items.length === 1 ? '1 file' : `${post.items.length} files`;
+  const successLabel = items.length === 1 ? '1 file' : `${items.length} files`;
   const batchId = await createDownloadBatch({
     platform: 'instagram',
-    total: post.items.length,
+    total: items.length,
     notify: platformSettings.showNotifications,
     successLabel,
   });
 
   let count = 0;
 
-  for (const [position, item] of post.items.entries()) {
+  for (const [position, item] of items.entries()) {
     let saved = null;
     try {
       saved = await downloadMedia(item, 'instagram', position + 1, resolveOptions);
@@ -890,9 +899,74 @@ async function handleDownloadFromShortcode(shortcode, preference) {
 
   if (count === 0) {
     console.warn(
-      `IGel: all ${post.items.length} download attempt(s) failed for Instagram`,
-      post.items.map((item) => ({ type: item.type, filename: item.filename })),
+      `IGel: all ${items.length} download attempt(s) failed for Instagram`,
+      items.map((item) => ({ type: item.type, filename: item.filename })),
     );
+  }
+}
+
+// --- Profile mass download handler ---
+export async function handleProfileMassDownload(shortcodes, platform) {
+  if (!shortcodes || shortcodes.length === 0) {
+    console.warn('IGel: profileMassDownload called with no shortcodes');
+    return;
+  }
+
+  const platformSettings = await chrome.storage.sync.get({
+    showNotifications: true,
+    downloadQuality: 'largest',
+  });
+  const resolveOptions = { preference: qualityPreferenceFromSetting(platformSettings.downloadQuality) };
+
+  const batchSize = 10;
+  let totalProcessed = 0;
+  let totalFailed = 0;
+
+  // Random sleep between downloads (50-200ms) to avoid rate limiting
+  const randomSleep = () => new Promise(r => setTimeout(r, 50 + Math.random() * 150));
+
+  for (let i = 0; i < shortcodes.length; i += batchSize) {
+    const batch = shortcodes.slice(i, i + batchSize);
+
+    for (const { shortcode, username } of batch) {
+      try {
+        const post = await resolveInstagramPost(shortcode, resolveOptions);
+        if (post.items && post.items.length > 0) {
+          const items = applyFallbackUsername(post.items, username);
+          for (const item of items) {
+            await downloadMedia(item, platform, 0, resolveOptions);
+            await randomSleep(); // 50-200ms after each download
+          }
+          // Post erfolgreich verarbeitet
+          totalProcessed++;
+        } else {
+          totalFailed++;
+        }
+      } catch (err) {
+        console.error('IGel: failed to process shortcode', shortcode, err);
+        totalFailed++;
+        totalProcessed++;
+      }
+    }
+
+    // Batch progress notification
+    if (platformSettings.showNotifications) {
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: 'icons/icon128.png',
+        title: 'IGel',
+        message: `Profile download: ${totalProcessed}/${shortcodes.length} posts processed.`,
+      });
+    }
+  }
+
+  if (platformSettings.showNotifications) {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'IGel',
+      message: `Profile download complete: ${totalProcessed} posts, ${totalFailed} failures.`,
+    });
   }
 }
 
@@ -927,13 +1001,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // Download über Shortcode (Button-Klick auf Carousel-Post)
   if (message.action === 'downloadFromShortcode' && message.shortcode && sender.tab) {
-    handleDownloadFromShortcode(message.shortcode, message.preference || 'largest').then(
+    handleDownloadFromShortcode(message.shortcode, message.preference || 'largest', message.username).then(
       () => sendResponse({ ok: true }),
       (err) => {
         console.error('IGel: downloadFromShortcode error:', err);
         sendResponse({ ok: false, error: err.message });
       },
     );
+    return true;
+  }
+
+  // Profile mass download
+  if (message.action === 'profileMassDownload' && message.shortcodes && sender.tab) {
+    handleProfileMassDownload(message.shortcodes, message.platform || 'instagram')
+      .then(
+        () => sendResponse({ ok: true }),
+        (err) => {
+          console.error('IGel: profileMassDownload error:', err);
+          sendResponse({ ok: false, error: err.message });
+        },
+      );
     return true;
   }
 });

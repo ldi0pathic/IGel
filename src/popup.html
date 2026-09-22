@@ -18,10 +18,15 @@
 
     <section class="settings" aria-labelledby="download-path-heading">
       <h2 id="download-path-heading">Download-Ordner</h2>
-      <label for="download-path">Pfad innerhalb von „Downloads“</label>
-      <input id="download-path" type="text" spellcheck="false" autocomplete="off" placeholder="IGel/{platform}">
-      <p class="field-error" id="download-path-error" role="alert" hidden></p>
-      <p class="save-status" id="save-status" aria-live="polite"></p>
+      <form id="download-path-form">
+        <label for="download-path">Pfad innerhalb von „Downloads“</label>
+        <input id="download-path" type="text" spellcheck="false" autocomplete="off" placeholder="IGel/{platform}">
+        <p class="field-error" id="download-path-error" role="alert" hidden></p>
+        <div class="settings-actions">
+          <button class="save-button" type="submit">Speichern</button>
+          <p class="save-status" id="save-status" aria-live="polite"></p>
+        </div>
+      </form>
 
       <p class="settings-help">Du kannst Unterordner mit <code>/</code> anlegen. Verfügbare Platzhalter:</p>
       <ul class="token-list" aria-label="Verfügbare Platzhalter">
@@ -36,6 +41,6 @@
     </section>
   </main>
 
-  <script src="popup.js"></script>
+  <script type="module" src="popup.js"></script>
 </body>
 </html>

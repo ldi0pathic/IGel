@@ -1,7 +1,6 @@
 // IGel — Instagram content script (overlay-layer button UI)
 // Pattern: globaler Overlay-Layer unter document.body, Buttons pro Media-Element
 // Das umgeht Instagram's overflow:hidden, transform, z-index und Stacking Contexts.
-console.log('[IGel] content script starting...');
 
 import {
   findPostContainer,
@@ -201,11 +200,12 @@ export function extractFromPageJson(pathname, preference = 'largest') {
 export function resolveSingle(srcUrl, target, pathname, preference = 'largest') {
   const shortcode = shortcodeForTarget(target, pathname);
   const filenameShortcode = extractShortcode(pathname);
+  const username = usernameForTarget(target);
   const url = upgradeImageUrl(srcUrl, target, preference);
   if (url) {
     return [withItemMeta(
       { url, type: 'image', filename: filenameShortcode ? `post_${filenameShortcode}` : null },
-      { postId: shortcode },
+      { postId: shortcode, username },
     )];
   }
 
@@ -215,7 +215,7 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
     if (upgraded) {
       return [withItemMeta(
         { url: upgraded, type: 'image', filename: filenameShortcode ? `post_${filenameShortcode}` : null },
-        { postId: shortcode },
+        { postId: shortcode, username },
       )];
     }
   }
@@ -227,7 +227,7 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
     if (src && !src.startsWith('blob:')) {
       return [withItemMeta(
         { url: src, type: 'video', filename: filenameShortcode ? `reel_${filenameShortcode}` : null },
-        { postId: shortcode },
+        { postId: shortcode, username },
       )];
     }
 
@@ -235,11 +235,11 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
     const scriptTexts = Array.from(scripts).map((s) => s.textContent);
     const cdnUrl = extractVideoUrlFromScripts(scriptTexts, preference);
     if (cdnUrl) {
-      return [{
+      return [withItemMeta({
         url: cdnUrl,
         type: 'video',
         filename: filenameShortcode ? `reel_${filenameShortcode}` : null,
-      }];
+      }, { postId: shortcode, username })];
     }
 
     if (shortcode) {
@@ -248,7 +248,7 @@ export function resolveSingle(srcUrl, target, pathname, preference = 'largest') 
         filename: filenameShortcode ? `reel_${filenameShortcode}` : null,
         shortcode,
         needsVideoLookup: true,
-      }, { postId: shortcode })];
+      }, { postId: shortcode, username })];
     }
   }
 
@@ -370,6 +370,29 @@ function descendantHrefs(container) {
   return Array.from(container.querySelectorAll('a[href]')).map((a) => a.getAttribute('href'));
 }
 
+const PROFILE_PATH = /^\/([A-Za-z0-9._]+)\/?$/;
+
+/** Find the post owner's profile link in the feed article containing this media. */
+export function usernameForTarget(target) {
+  const article = target?.closest?.('article');
+  const container = article || target?.closest?.('[role="dialog"]');
+  if (!container) return null;
+
+  for (const href of descendantHrefs(container)) {
+    const match = href?.match(PROFILE_PATH);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function withUsername(items, username, shortcode = null) {
+  if (!username) return items;
+  return items.map((item) => withItemMeta(item, {
+    postId: item.meta?.postId || shortcode,
+    username: item.meta?.username || username,
+  }));
+}
+
 function shortcodeForTarget(target, pathname) {
   const ownerHrefs = ancestorHrefs(target);
   if (ownerHrefs.length > 0) return shortcodeFromContainer(ownerHrefs);
@@ -394,9 +417,12 @@ function shortcodeForTarget(target, pathname) {
 
 async function resolveAll(target, pathname, preference = 'largest') {
   const urlShortcode = extractShortcode(pathname);
+  const username = usernameForTarget(target);
 
   const jsonItems = extractFromPageJson(pathname, preference);
-  if (jsonItems.length > 0) return { items: jsonItems, shortcode: urlShortcode };
+  if (jsonItems.length > 0) {
+    return { items: withUsername(jsonItems, username, urlShortcode), shortcode: urlShortcode };
+  }
 
   let post = findPostContainer(target, [
     'article',
@@ -426,8 +452,119 @@ async function resolveAll(target, pathname, preference = 'largest') {
     preference,
   );
   return {
-    items,
+    items: withUsername(items, username, shortcode),
     shortcode,
+  };
+}
+
+// ============================================================================
+//  PROFILE POST COLLECTION
+// ============================================================================
+
+/**
+ * Collect all post shortcodes visible on the current profile page.
+ * Returns array of { shortcode, username } objects.
+ */
+export function collectProfilePosts() {
+  const posts = [];
+  const seen = new Set();
+
+  const articles = document.querySelectorAll('article');
+  for (const article of articles) {
+    const links = article.querySelectorAll('a[href*="/p/"], a[href*="/reel/"], a[href*="/tv/"]');
+    for (const link of links) {
+      const href = link.getAttribute('href');
+      const match = href && href.match(/\/(p|reel|tv)\/([A-Za-z0-9_-]+)/);
+      if (match) {
+        const shortcode = match[2];
+        if (!seen.has(shortcode)) {
+          seen.add(shortcode);
+          const username = usernameForTarget(article);
+          posts.push({ shortcode, username });
+        }
+      }
+    }
+  }
+
+  return posts;
+}
+
+/**
+ * Check if the page is a profile page.
+ */
+export function isProfilePage() {
+  try {
+    const path = window.location.pathname;
+    return /^\/([A-Za-z0-9._]+)\/?$/.test(path);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Scroll the page down by one viewport height and wait for content to load.
+ */
+export async function scrollDown() {
+  return new Promise((resolve) => {
+    const currentHeight = document.documentElement.scrollHeight;
+    window.scrollBy(0, window.innerHeight);
+
+    const check = () => {
+      const newHeight = document.documentElement.scrollHeight;
+      if (newHeight > currentHeight) {
+        resolve(newHeight);
+      } else {
+        setTimeout(check, 500);
+      }
+    };
+    setTimeout(check, 1000);
+  });
+}
+
+/**
+ * Collect all posts from a profile by auto-scrolling through the page.
+ * Returns { shortcodes: [...], username: ... }
+ */
+export async function collectAllProfilePosts() {
+  const allShortcodes = [];
+  const seen = new Set();
+  let lastHeight = document.documentElement.scrollHeight;
+
+  const initial = collectProfilePosts();
+  for (const p of initial) {
+    if (!seen.has(p.shortcode)) {
+      seen.add(p.shortcode);
+      allShortcodes.push(p);
+    }
+  }
+
+  let noNewContentCount = 0;
+  while (noNewContentCount < 3) {
+    await scrollDown();
+    await new Promise(r => setTimeout(r, 1500));
+
+    const newPosts = collectProfilePosts();
+    let newFound = false;
+    for (const p of newPosts) {
+      if (!seen.has(p.shortcode)) {
+        seen.add(p.shortcode);
+        allShortcodes.push(p);
+        newFound = true;
+      }
+    }
+
+    const newHeight = document.documentElement.scrollHeight;
+    if (newHeight <= lastHeight && !newFound) {
+      noNewContentCount++;
+    } else {
+      noNewContentCount = 0;
+      lastHeight = newHeight;
+    }
+  }
+
+  return {
+    shortcodes: allShortcodes.map(p => ({ shortcode: p.shortcode, username: p.username })),
+    username: allShortcodes.length > 0 ? allShortcodes[0].username : null,
   };
 }
 
@@ -457,7 +594,6 @@ function getOverlayLayer() {
     'overflow: visible',
   ].join(';');
   document.body.appendChild(overlayLayer);
-  console.log('[IGel] Overlay-Layer created');
   return overlayLayer;
 }
 
@@ -504,7 +640,6 @@ function createMediaButton(mediaEl, mediaUrl) {
   btn.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log('[IGel] Download click: url=' + (mediaUrl || '?').substring(0, 90));
     await handleDownload(mediaUrl, btn);
   });
 
@@ -520,7 +655,6 @@ function createMediaButton(mediaEl, mediaUrl) {
   btn.classList.add('visible');
 
   mediaButtons.set(mediaEl, btn);
-  console.log('[IGel] Button created for', mediaEl.tagName, 'url:', mediaUrl?.substring(0, 60));
 
   return btn;
 }
@@ -545,12 +679,23 @@ function removeButtonForMedia(mediaEl) {
     btn.remove();
     mediaButtons.delete(mediaEl);
   }
+  delete mediaEl.dataset.igelHasButton;
+}
+
+function clearMediaButtons() {
+  for (const [mediaEl, btn] of mediaButtons) {
+    btn.remove();
+    delete mediaEl.dataset.igelHasButton;
+  }
+  mediaButtons.clear();
 }
 
 // --- Media hinzufügen (wenn sichtbar) ---
 
 function addButtonToMedia(mediaEl) {
-  if (mediaEl.dataset.igelHasButton) return;
+  if (mediaButtons.has(mediaEl)) return;
+  // A stale marker can remain after the overlay layer was cleared.
+  delete mediaEl.dataset.igelHasButton;
 
   const url = mediaEl.src ||
     mediaEl.getAttribute('data-src') ||
@@ -651,10 +796,10 @@ function repositionAllButtons() {
 
   // Neue sichtbare Medien erkennen
   getVisibleImages().forEach(img => {
-    if (!img.dataset.igelHasButton) addButtonToMedia(img);
+    addButtonToMedia(img);
   });
   getVisibleVideos().forEach(video => {
-    if (!video.dataset.igelHasButton) addButtonToMedia(video);
+    addButtonToMedia(video);
   });
 }
 
@@ -680,12 +825,8 @@ const mutationObserver = new MutationObserver((mutations) => {
       }
 
       // Kinder nach Medien durchsuchen
-      Array.from(node.querySelectorAll('img')).forEach(img => {
-        if (img.dataset.igelHasButton) removeButtonForMedia(img);
-      });
-      Array.from(node.querySelectorAll('video')).forEach(video => {
-        if (video.dataset.igelHasButton) removeButtonForMedia(video);
-      });
+      Array.from(node.querySelectorAll('img')).forEach(removeButtonForMedia);
+      Array.from(node.querySelectorAll('video')).forEach(removeButtonForMedia);
     });
 
     // Hinzugefügte Nodes: Buttons erstellen
@@ -730,7 +871,6 @@ function isLightboxOpen() {
       if (hasMedia) {
         const style = window.getComputedStyle(dialog);
         if (style.display !== 'none' && style.visibility !== 'hidden') {
-          console.log('[IGel] Lightbox detected via dominant dialog');
           return true;
         }
       }
@@ -744,7 +884,6 @@ function isLightboxOpen() {
     if (rect.width > vw * 0.9 && rect.height > vh * 0.9) {
       const style = window.getComputedStyle(img);
       if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
-        console.log('[IGel] Lightbox detected via large image (' + Math.round(rect.width) + 'x' + Math.round(rect.height) + ')');
         return true;
       }
     }
@@ -757,20 +896,13 @@ let lightboxWasOpen = false;
 
 function checkLightboxChange() {
   const nowOpen = isLightboxOpen();
-  console.log('[IGel] Lightbox state: was=' + lightboxWasOpen + ', now=' + nowOpen);
   if (lightboxWasOpen && !nowOpen) {
-    console.log('[IGel] Lightbox closed — recreating buttons');
-    const layer = getOverlayLayer();
-    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
-    mediaButtons.clear();
+    clearMediaButtons();
     getVisibleImages().forEach(img => addButtonToMedia(img));
     getVisibleVideos().forEach(video => addButtonToMedia(video));
     scheduleReposition();
   } else if (!lightboxWasOpen && nowOpen) {
-    console.log('[IGel] Lightbox opened — hiding buttons');
-    const layer = getOverlayLayer();
-    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
-    mediaButtons.clear();
+    clearMediaButtons();
   }
   lightboxWasOpen = nowOpen;
 }
@@ -809,10 +941,7 @@ function urlChanged() {
 
 function handleUrlChange() {
   if (urlChanged()) {
-    console.log('[IGel] URL changed, resetting buttons (wasLightbox=' + lightboxWasOpen + ')');
-    const layer = getOverlayLayer();
-    layer.querySelectorAll('.igel-overlay').forEach(btn => btn.remove());
-    mediaButtons.clear();
+    clearMediaButtons();
     // Nur neue Buttons erstellen, wenn keine Lightbox offen ist
     if (!isLightboxOpen()) {
       getVisibleImages().forEach(img => addButtonToMedia(img));
@@ -851,19 +980,19 @@ async function handleDownload(url, btnElement) {
     const mediaEl = btnElement?._igelMediaEl || null;
     const domShortcode = urlShortcode || (mediaEl ? shortcodeForTarget(mediaEl, pathname) : null);
     const shortcode = domShortcode;
+    const username = mediaEl ? usernameForTarget(mediaEl) : null;
 
     if (shortcode) {
-      console.log('[IGel] Shortcode found:', shortcode, '— requesting API download from background');
       chrome.runtime.sendMessage({
         action: 'downloadFromShortcode',
         shortcode: shortcode,
+        username,
         preference: 'largest',
-      }, (response) => {
+      }, () => {
         if (chrome.runtime.lastError) {
           console.warn('[IGel] Download failed:', chrome.runtime.lastError.message);
           return;
         }
-        console.log('[IGel] Download from shortcode sent, response:', response);
       });
     } else {
       console.warn('[IGel] No shortcode found — falling back to DOM resolve');
@@ -874,17 +1003,15 @@ async function handleDownload(url, btnElement) {
           console.warn('[IGel] No items found for download');
           return;
         }
-        console.log('[IGel] DOM resolve done, items:', items.length);
         chrome.runtime.sendMessage({
           action: 'downloadBatch',
           platform: 'instagram',
           items: items,
-        }, (response) => {
+        }, () => {
           if (chrome.runtime.lastError) {
             console.warn('[IGel] Download failed:', chrome.runtime.lastError.message);
             return;
           }
-          console.log('[IGel] Download batch sent, response:', response);
         });
       } catch (err) {
         console.error('[IGel] DOM resolve error:', err);
@@ -907,7 +1034,6 @@ async function handleDownload(url, btnElement) {
     a.click();
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    console.log('[IGel] Download OK:', url.substring(0, 80));
   } catch (err) {
     console.error('[IGel] Download error:', err);
   }
@@ -916,20 +1042,16 @@ async function handleDownload(url, btnElement) {
 // --- Init: Buttons für bereits sichtbare Medien ---
 
 function initExistingMedia() {
-  console.log('[IGel] initExistingMedia: scanning visible media...');
   const images = getVisibleImages();
   const videos = getVisibleVideos();
 
   images.forEach(img => {
-    console.log('[IGel] Found image:', img.src?.substring(0, 60));
     addButtonToMedia(img);
   });
   videos.forEach(video => {
-    console.log('[IGel] Found video:', video.src?.substring(0, 60));
     addButtonToMedia(video);
   });
 
-  console.log('[IGel] initExistingMedia done. Images:', images.length, 'Videos:', videos.length);
 }
 
 // ============================================================================
@@ -953,18 +1075,14 @@ function initContentScript() {
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!_isPageActive) {
-      console.log('[IGel] page not active, ignoring message');
       return false;
     }
-    console.log('[IGel] onMessage received:', message.action);
     if (message.action === 'resolve') {
-      console.log('[IGel] resolve target:', _lastTarget?.tagName, 'pathname:', window.location.pathname);
       const target = _lastTarget;
       const pathname = window.location.pathname;
 
       Promise.resolve()
         .then(() => {
-          console.log('[IGel] resolving...');
           return message.type === 'single'
             ? {
                 items: resolveSingle(message.srcUrl, target, pathname, message.preference),
@@ -973,7 +1091,6 @@ function initContentScript() {
             : resolveAll(target, pathname, message.preference);
         })
         .then((result) => {
-          console.log('[IGel] resolve done, items:', result.items?.length);
           sendResponse({ urls: result.items || [], platform: 'instagram', shortcode: result.shortcode || null });
         })
         .catch((err) => {
@@ -982,7 +1099,6 @@ function initContentScript() {
         });
       return true;
     }
-    console.log('[IGel] unknown action:', message.action);
     return false;
   });
 }
@@ -1006,10 +1122,8 @@ function waitForBodyAndInit() {
 }
 
 function runExtensionInit() {
-  console.log('[IGel] Content script starting init...');
   try {
     initContentScript();
-    console.log('[IGel] Content script initialized (messages registered).');
   } catch (err) {
     console.error('[IGel] Content script init failed:', err);
   }
@@ -1030,7 +1144,6 @@ function runExtensionInit() {
       setTimeout(() => {
         initExistingMedia();
         scheduleReposition();
-        console.log('[IGel] Overlay-layer UI ready.');
       }, 1000);
     });
   } catch (err) {

@@ -163,7 +163,20 @@ footer {
 }
 
 .field-error { margin-top: 6px; color: #fca5a5; font-size: 11px; line-height: 1.35; }
-.save-status { min-height: 16px; margin-top: 5px; color: #7dd3fc; font-size: 11px; }
+.settings-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.save-button {
+  padding: 7px 10px;
+  color: #e0f2fe;
+  background: linear-gradient(135deg, #0284c7, #1d4ed8);
+  border: 1px solid rgba(125, 211, 252, 0.55);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.save-button:hover { filter: brightness(1.12); }
+.save-button:focus-visible { outline: 2px solid var(--blue-light); outline-offset: 2px; }
+.save-status { min-height: 16px; color: #7dd3fc; font-size: 11px; }
 .settings-help { margin-top: 10px; }
 .token-list {
   display: grid;
