@@ -27,4 +27,25 @@ describe('Instagram profile collection', () => {
     expect(result).toHaveLength(3);
     expect(result.map(p => p.shortcode)).toEqual(['abc123', 'def456', 'xyz789']);
   });
+
+  it('extracts username from profile DOM', () => {
+    document.body.innerHTML = `
+      <article>
+        <a href="/p/abc123/">Post 1</a>
+        <a href="/testuser/">Profile link</a>
+      </article>
+    `;
+    const result = collectProfilePosts();
+    expect(result).toHaveLength(1);
+    expect(result[0].username).toBe('testuser');
+  });
+
+  it('returns empty array when no articles present', () => {
+    document.body.innerHTML = `
+      <a href="/p/abc123/">Post 1</a>
+    `;
+    // Without article wrapper, no posts are found
+    const result = collectProfilePosts();
+    expect(result).toHaveLength(0);
+  });
 });

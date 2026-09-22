@@ -1007,7 +1007,7 @@ async function handleDownload(url, btnElement) {
           action: 'downloadBatch',
           platform: 'instagram',
           items: items,
-        }, (response) => {
+        }, () => {
           if (chrome.runtime.lastError) {
             console.warn('[IGel] Download failed:', chrome.runtime.lastError.message);
             return;
